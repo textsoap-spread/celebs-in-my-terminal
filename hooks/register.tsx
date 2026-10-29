@@ -20,7 +20,7 @@ const EYE = '#111827'
 
 const CREW: Sprite[] = [
   {
-    name: '클로드',
+    name: 'CLAUDE',
     palette: { H: '#1f2937', R: '#dc2626', O: '#d97757', k: EYE },
     small: [
       '..HHHH..',
@@ -69,7 +69,7 @@ const CREW: Sprite[] = [
     ],
   },
   {
-    name: '머스크',
+    name: 'MUSK',
     palette: { D: '#3b2a1e', S: SKIN, k: EYE, b: '#3b2a1e', n: '#d9a37e', m: '#9a4a3a', W: '#ffffff', B: '#111111' },
     small: [
       '..DDDD..',
@@ -118,7 +118,7 @@ const CREW: Sprite[] = [
     ],
   },
   {
-    name: '잡스',
+    name: 'JOBS',
     palette: { D: '#3f3f46', S: SKIN, k: EYE, b: '#3f3f46', G: '#27272a', n: '#d9a37e', d: '#a8a29e', m: '#9a4a3a', B: '#111111' },
     small: [
       '..DDDD..',
@@ -167,7 +167,7 @@ const CREW: Sprite[] = [
     ],
   },
   {
-    name: '칸예',
+    name: 'KANYE',
     palette: { d: '#1c1917', S: '#8d5524', K: '#000000', g: '#9ca3af', n: '#6f4220', m: '#4a2c1a', B: '#111111' },
     small: [
       '..dddd..',
@@ -216,7 +216,7 @@ const CREW: Sprite[] = [
     ],
   },
   {
-    name: '버질',
+    name: 'VIRGIL',
     palette: { d: '#1c1917', S: '#7c4a2a', k: EYE, b: '#1c1917', n: '#5f3820', m: '#3a2015', W: '#f5f5f4', B: '#111111', O: '#f97316' },
     small: [
       '..dddd..',
@@ -265,7 +265,7 @@ const CREW: Sprite[] = [
     ],
   },
   {
-    name: '후지와라',
+    name: 'FUJIWARA',
     palette: { L: '#b8bcc2', S: '#f1d3b3', K: '#000000', g: '#9ca3af', n: '#d9b08c', m: '#a0604a', W: '#f5f5f4', B: '#27272a' },
     small: [
       '.LLLLLL.',
@@ -394,7 +394,7 @@ export const register: Register = on => {
         <Box flexDirection="row" width="100%" justifyContent="center">
           <Box flexDirection="column" alignItems="center" width={px + 2}>
             {Array.from({ length: lines }, (_, y) => row(y))}
-            <Text dimColor wrap="truncate">{sprite.name}</Text>
+            <Text bold wrap="truncate">{sprite.name}</Text>
           </Box>
           {/* 말풍선: 그림 가운데 높이에 꼬리 */}
           <Box flexDirection="column" marginTop={Math.max(0, lines / 2 - 1)}>
