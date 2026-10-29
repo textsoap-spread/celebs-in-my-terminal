@@ -1,1 +1,1 @@
-{ "name": "hat-clawd", "version": "0.2.0", "description": "입력창 위에 모자 쓴 클로드와 8비트 친구들을 띄운다", "types": "./types/index.d.ts" }
+{ "name": "hat-clawd", "version": "0.3.0", "description": "입력창 위에 모자 쓴 클로드와 8비트 친구들을 띄운다", "types": "./types/index.d.ts" }

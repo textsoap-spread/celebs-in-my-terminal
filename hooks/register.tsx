@@ -1,24 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, StateDollar } from 'claude-code'
 
-import type { PixelSize } from '../types'
-
-// 픽셀 그림. 글자 한 칸에 위아래 두 픽셀을 ▀ (글자색=위, 배경색=아래)로 그린다
-// small 은 8x8 (4줄), big 은 16x16 (8줄). '.' 은 투명
-// idle 은 평소 대사, busy 는 작업 중 대사
-type Sprite = {
-  name: string
-  palette: Record<string, string>
-  small: string[]
-  big: string[]
-  idle: string[]
-  busy: string[]
-}
+import type { PixelSize, Sprite } from '../types'
 
 const SKIN = '#f2c5a0'
 const EYE = '#111827'
 
-const CREW: Sprite[] = [
+// 예시 친구들. /crew 로 내 친구를 넣으면 그 친구들만 나온다
+const EXAMPLES: Sprite[] = [
   {
     name: 'CLAUDE',
     palette: { H: '#1f2937', R: '#dc2626', O: '#d97757', k: EYE },
@@ -320,14 +309,105 @@ const size = atom({ plugin: 'hat-clawd', key: 'size' } as const, 16 as PixelSize
 // 지금 말 거는 친구와 대사 번호 (질문할 때마다 새로 뽑는다)
 const who = atom({ plugin: 'hat-clawd', key: 'who' } as const, 0)
 const line = atom({ plugin: 'hat-clawd', key: 'line' } as const, 0)
+// 내가 고른 친구들. 세션이 끝나도 남도록 $.store 에도 같이 적는다
+const crew = atom({ plugin: 'hat-clawd', key: 'crew' } as const, [] as Sprite[])
+
+const lineup = async ($: StateDollar) => {
+  const mine = await read($, crew)
+  return mine.length > 0 ? mine : EXAMPLES
+}
 
 const pick = async ($: StateDollar) => {
+  const count = (await lineup($)).length
   const current = await read($, who)
   // 같은 사람이 연달아 안 나오게
-  const next = (current + 1 + Math.floor(Math.random() * (CREW.length - 1))) % CREW.length
+  const next = count < 2 ? 0 : (current + 1 + Math.floor(Math.random() * (count - 1))) % count
   await update($, who, () => next)
   await update($, line, () => Math.floor(Math.random() * 100))
 }
+
+const saveCrew = async ($: StateDollar, list: Sprite[]) => {
+  await update($, crew, () => list)
+  await $.store.set('crew', list)
+  await pick($)
+}
+
+// 모델이 그린 그림이 규칙에 맞는지 본다. 맞지 않으면 이유를 돌려준다
+const check = (s: Sprite): string | undefined => {
+  if (!s || typeof s.name !== 'string' || !s.name) return 'name 이 없다'
+  if (!s.palette || typeof s.palette !== 'object') return 'palette 가 없다'
+  for (const [key, color] of Object.entries(s.palette)) {
+    if (key.length !== 1 || key === '.') return `palette 키 "${key}" 는 '.' 이 아닌 한 글자여야 한다`
+    if (!/^#[0-9a-fA-F]{6}$/.test(color)) return `palette 색 "${color}" 는 #rrggbb 여야 한다`
+  }
+  for (const [field, n] of [['small', 8], ['big', 16]] as const) {
+    const rows = s[field]
+    if (!Array.isArray(rows) || rows.length !== n) return `${field} 는 ${n}줄이어야 한다`
+    for (const row of rows) {
+      if (typeof row !== 'string' || row.length !== n) return `${field} 의 각 줄은 정확히 ${n}글자여야 한다: "${row}"`
+      for (const c of row) {
+        if (c !== '.' && !(c in s.palette)) return `${field} 에 palette 에 없는 글자 "${c}" 가 있다`
+      }
+    }
+  }
+  for (const field of ['idle', 'busy'] as const) {
+    const said = s[field]
+    if (!Array.isArray(said) || said.length === 0 || said.some(w => typeof w !== 'string' || !w)) {
+      return `${field} 는 대사 문자열 목록이어야 한다`
+    }
+  }
+  return undefined
+}
+
+const ASK = `너는 터미널에 나오는 8비트 도트 캐릭터를 그린다.
+요청한 인물을 그 사람의 머리 모양, 피부색, 안경, 옷 같은 특징이 한눈에 보이게 그려라.
+아래 JSON 하나만 답해라. 설명이나 코드 블록 표시는 쓰지 마라.
+
+{
+  "name": "인물 이름. 영어 대문자, 짧게 (예: MUSK, JOBS)",
+  "palette": { "한 글자": "#rrggbb", ... },
+  "small": [8x8 그림. 8글자짜리 문자열 8개],
+  "big": [16x16 그림. 16글자짜리 문자열 16개],
+  "idle": [평소에 하는 말 8개],
+  "busy": [작업을 기다리는 동안 하는 말 5개]
+}
+
+규칙:
+- 그림의 각 글자는 palette 의 키이거나 '.' (투명) 이다. palette 키는 '.' 이 아닌 한 글자다.
+- small 은 얼굴과 어깨, big 은 머리부터 어깨까지 그린다.
+- 대사는 그 인물다운 짧은 말이다. 한국어 반말로, 20자 안팎. 이모지는 가끔만.
+
+예시 (MUSK):
+`
+
+const draw = async ($: StateDollar, person: string): Promise<Sprite | string> => {
+  const sample = EXAMPLES.find(s => s.name === 'MUSK')
+  let prompt = `${ASK}${JSON.stringify(sample)}\n\n그릴 인물: ${person}`
+  let problem = '답이 비었다'
+  // 규칙에 안 맞으면 이유를 알려주고 한 번 더 그리게 한다
+  for (let i = 0; i < 2; i++) {
+    const r = await $.model.complete({ model: 'sonnet', prompt, maxTokens: 4000 })
+    if (!r.isAnswered) return '그림을 못 받았어. 잠시 뒤에 다시 해봐.'
+    const start = r.text.indexOf('{')
+    const end = r.text.lastIndexOf('}')
+    try {
+      const s = JSON.parse(r.text.slice(start, end + 1)) as Sprite
+      problem = check(s) ?? ''
+      if (!problem) return { ...s, name: s.name.toUpperCase() }
+    } catch {
+      problem = 'JSON 으로 읽을 수 없다'
+    }
+    prompt = `${prompt}\n\n지난 답:\n${r.text}\n\n문제: ${problem}. 고쳐서 JSON 만 다시 답해라.`
+  }
+  return `그림이 규칙에 안 맞아서 못 넣었어 (${problem}). 다시 해봐.`
+}
+
+const HELP = [
+  '/crew               지금 나오는 친구 보기',
+  '/crew add 이름      친구 넣기 (예시 친구 이름이면 그대로, 아니면 AI가 그려줌)',
+  '/crew remove 이름   친구 빼기',
+  '/crew reset         내 친구 다 지우고 예시 친구로 돌아가기',
+].join('\n')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -335,6 +415,14 @@ export const register: Register = on => {
       name: 'pixel',
       description: '입력창 위 친구 그림 크기 바꾸기 (8x8 <-> 16x16)',
     })
+    await $.command.register({
+      name: 'crew',
+      description: '입력창 위에 나올 친구 고르기 (add 이름 / remove 이름 / reset)',
+    })
+    const stored = await $.store.get('crew')
+    if (Array.isArray(stored)) {
+      await update($, crew, () => (stored as Sprite[]).filter(s => !check(s)))
+    }
     await pick($)
 
     return next(e)
@@ -344,6 +432,45 @@ export const register: Register = on => {
     const now = await update($, size, s => (s === 16 ? 8 : 16))
 
     return { text: `친구를 ${now}x${now}로 바꿨어.` }
+  })
+
+  on('command.run', { command: 'crew' }, async ($, e) => {
+    const [action = '', ...rest] = e.args.trim().split(/\s+/)
+    const name = rest.join(' ')
+    const mine = await read($, crew)
+    const same = (s: Sprite) => s.name.toUpperCase() === name.toUpperCase()
+
+    if (action === 'add' && name) {
+      if (mine.some(same)) return { text: `이미 있는 친구야: ${name.toUpperCase()}` }
+      const example = EXAMPLES.find(same)
+      let sprite: Sprite | string
+      if (example) {
+        sprite = example
+      } else {
+        await $.ui.toast(`${name} 그리는 중... 30초쯤 걸려`)
+        sprite = await draw($, name)
+      }
+      if (typeof sprite === 'string') return { text: sprite }
+      await saveCrew($, [...mine, sprite])
+      return { text: `새 친구 추가: ${sprite.name}. 이제 내 친구 ${mine.length + 1}명만 나와.` }
+    }
+
+    if (action === 'remove' && name) {
+      if (!mine.some(same)) return { text: `내 친구 목록에 없어: ${name.toUpperCase()}` }
+      const left = mine.filter(s => !same(s))
+      await saveCrew($, left)
+      return { text: left.length > 0 ? `친구 뺌: ${name.toUpperCase()}` : `친구 뺌: ${name.toUpperCase()}. 내 친구가 없어서 예시 친구들이 다시 나와.` }
+    }
+
+    if (action === 'reset') {
+      await saveCrew($, [])
+      return { text: '내 친구를 다 지웠어. 예시 친구들이 다시 나와.' }
+    }
+
+    const now = mine.length > 0
+      ? `내 친구: ${mine.map(s => s.name).join(', ')}`
+      : `지금은 예시 친구들이 나와: ${EXAMPLES.map(s => s.name).join(', ')}`
+    return { text: `${now}\n\n${HELP}` }
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -362,10 +489,30 @@ export const register: Register = on => {
     }
 
     const { Box, Text } = $.ui.resolve(e)
-    const sprite = CREW[(await read($, who)) % CREW.length]
+    const list = await lineup($)
+    const sprite = list[(await read($, who)) % list.length]
     const said = e.props.isWorking ? sprite.busy : sprite.idle
     const words = said[(await read($, line)) % said.length]
-    const rows = px === 16 ? sprite.big : sprite.small
+    // 위아래 빈 줄은 잘라서 캐릭터마다 여백이 같게. 홀수 줄이면 아래에 빈 줄 하나
+    const drawn = px === 16 ? sprite.big : sprite.small
+    const filled = (r: string) => [...r].some(c => sprite.palette[c])
+    const first = drawn.findIndex(filled)
+    const last = drawn.length - 1 - [...drawn].reverse().findIndex(filled)
+    const rows = first < 0 ? ['.'.repeat(px)] : drawn.slice(first, last + 1)
+    if (rows.length % 2) rows.push('.'.repeat(px))
+    const height = rows.length / 2
+
+    // 말풍선 색: 그림에서 제일 많이 쓴 진한 색 (밝은 피부색·흰색은 건너뛴다)
+    const used: Record<string, number> = {}
+    for (const r of rows) for (const c of r) if (sprite.palette[c]) used[c] = (used[c] ?? 0) + 1
+    const dark = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+      return 0.299 * r + 0.587 * g + 0.114 * b < 170
+    }
+    const accentKey = Object.keys(used)
+      .filter(c => dark(sprite.palette[c]))
+      .sort((a, b) => used[b] - used[a])[0]
+    const accent = accentKey ? sprite.palette[accentKey] : undefined
 
     const row = (y: number) => {
       const top = rows[y * 2]
@@ -391,20 +538,20 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {await next(e)}
         {/* 가운데 정렬 (엔진 노드가 안 들어간 상자라 width 를 줘도 된다) */}
-        <Box flexDirection="row" width="100%" justifyContent="center">
+        <Box flexDirection="row" width="100%" justifyContent="center" marginTop={1}>
           <Box flexDirection="column" alignItems="center" width={px + 2}>
-            {Array.from({ length: lines }, (_, y) => row(y))}
-            <Text bold wrap="truncate">{sprite.name}</Text>
+            {Array.from({ length: height }, (_, y) => row(y))}
+            <Text bold color={accent} wrap="truncate">{sprite.name}</Text>
           </Box>
-          {/* 말풍선: 그림 가운데 높이에 꼬리 */}
-          <Box flexDirection="column" marginTop={Math.max(0, lines / 2 - 1)}>
+          {/* 말풍선: 그림 가운데 높이에 꼬리, 테두리와 꼬리는 캐릭터 색 */}
+          <Box flexDirection="column" marginTop={Math.max(0, Math.floor((height + 1) / 2) - 1)}>
             <Box flexDirection="row">
               <Box flexDirection="column">
                 <Text> </Text>
-                <Text dimColor>◀</Text>
+                <Text color={accent}>◀</Text>
               </Box>
-              <Box borderStyle="round" borderDimColor paddingX={1}>
-                <Text wrap="truncate">{words}</Text>
+              <Box borderStyle="round" borderColor={accent} paddingX={1}>
+                <Text wrap="truncate" italic={e.props.isWorking}>{words}</Text>
               </Box>
             </Box>
           </Box>
