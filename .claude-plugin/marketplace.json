@@ -1,0 +1,5 @@
+{
+  "name": "celebs-in-my-terminal",
+  "owner": { "name": "textsoap-spread" },
+  "plugins": [{ "name": "hat-clawd", "source": "./" }]
+}
